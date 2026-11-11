@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pattaya LOD1 Mini App</title>
+    <script src="https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/Cesium.js"></script>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/cesium@1.146.0/Build/Cesium/Widgets/widgets.css"
+    />
+    <style>
+      html,
+      body,
+      #cesiumContainer {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+      }
+      #panel {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        z-index: 10;
+        width: 300px;
+        max-height: calc(100% - 24px);
+        overflow: auto;
+        background: rgba(20, 28, 38, 0.88);
+        color: #e8eef4;
+        border-radius: 6px;
+        font:
+          13px/1.5 system-ui,
+          sans-serif;
+        padding: 12px;
+      }
+      #panel h1 {
+        font-size: 15px;
+        margin: 0 0 8px;
+      }
+      #panel label {
+        display: block;
+        margin: 6px 0;
+      }
+      #panel select {
+        width: 100%;
+        padding: 4px;
+      }
+      #info table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      #info td {
+        border-top: 1px solid #3a4756;
+        padding: 2px 4px;
+        vertical-align: top;
+        word-break: break-all;
+      }
+      #info td:first-child {
+        color: #9fb3c8;
+        white-space: nowrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="cesiumContainer"></div>
+    <div id="panel">
+      <h1>Pattaya LOD1</h1>
+      <label
+        >Layer
+        <select id="layer">
+          <option value="pattaya">พัทยา 3 cell</option>
+          <option value="thailand">ทั้งประเทศ (virtual)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="terrain" checked /> Terrain_TH</label>
+      <label><input type="checkbox" id="byHeight" checked /> สีตามความสูง BL_HEIGHT</label>
+
+      <form id="keyForm">
+        <label for="input-secret">Your API Key</label>
+        <input type="text" id="input-secret" name="api_key" value="" />
+        <button type="submit">Submit</button>
+      </form>
+      <div id="info">click อาคารเพื่อดูข้อมูล</div>
+    </div>
+    <script>
+      let gatewayKey = "<YOUR_GATEWAY_KEY>";
+
+      const gatewayHost = "https://api-gateway.gistda.or.th/api/2.0/resources";
+      const giHost = "https://3d.gistda.or.th";
+
+      const basemapService = () =>
+        `${gatewayHost}/tiles/basemap_latest/{z}/{x}/{y}.png?api_key=${encodeURIComponent(gatewayKey)}`;
+      const terrainService = `${giHost}/Terrain_TH`;
+      const lodService = `${gatewayHost}/3d-tiles/thailand-lod`;
+      const lodThailandService = `${lodService}/tileset.json`;
+      const featuresService = `${gatewayHost}/features/thailand-buildings-footprint`;
+
+      const layers = {
+        pattaya: [
+          `${lodService}/67e1cb29f6e39c26821015a6/tileset.json`,
+          `${lodService}/67e1cc27f6e39c26821015a9/tileset.json`,
+          `${lodService}/67e1cbcbf6e39c26821015a7/tileset.json`,
+        ],
+        thailand: [lodThailandService],
+      };
+
+      const viewer = new Cesium.Viewer("cesiumContainer", {
+        animation: false,
+        baseLayerPicker: false,
+        fullscreenButton: false,
+        vrButton: false,
+        geocoder: false,
+        homeButton: false,
+        infoBox: false,
+        sceneModePicker: false,
+        selectionIndicator: false,
+        timeline: false,
+        navigationHelpButton: false,
+        baseLayer: false,
+      });
+
+      const scene = viewer.scene;
+      scene.globe.baseColor = Cesium.Color.WHITE;
+      scene.globe.depthTestAgainstTerrain = true;
+
+      let tilesets = [];
+      let picked = null;
+      let layerRequest = 0;
+      let terrainEnabled = false;
+      let basemap = null;
+
+      function onAddBasemap(viewer) {
+        if (basemap) viewer.imageryLayers.remove(basemap);
+        basemap = viewer.imageryLayers.addImageryProvider(
+          new Cesium.UrlTemplateImageryProvider({
+            url: basemapService(),
+            credit: "basemap_latest",
+          }),
+        );
+        viewer.imageryLayers.lowerToBottom(basemap);
+        return basemap;
+      }
+
+      function onToggleTerrain(viewer, enable) {
+        terrainEnabled = enable;
+        if (!enable) {
+          viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          return;
+        }
+        Cesium.CesiumTerrainProvider.fromUrl(terrainService)
+          .then((data) => {
+            if (terrainEnabled) viewer.terrainProvider = data;
+          })
+          .catch(() => {
+            viewer.terrainProvider = new Cesium.EllipsoidTerrainProvider();
+          });
+      }
+
+      function tilesetResource(url) {
+        return new Cesium.Resource({
+          url,
+          headers: { "API-Key": gatewayKey },
+        });
+      }
+
+      function heightStyle() {
+        return new Cesium.Cesium3DTileStyle({
+          color: {
+            conditions: [
+              ["Number(${BL_HEIGHT}) >= 30", "color('#b2182b')"],
+              ["Number(${BL_HEIGHT}) >= 12", "color('#ef8a62')"],
+              ["Number(${BL_HEIGHT}) >= 6", "color('#fddbc7')"],
+              ["true", "color('#f7f7f7')"],
+            ],
+          },
+        });
+      }
+
+      async function onAddTileset(viewer, url) {
+        const tileset = await Cesium.Cesium3DTileset.fromUrl(tilesetResource(url), {
+          maximumScreenSpaceError: 16,
+        });
+        viewer.scene.primitives.add(tileset);
+        return tileset;
+      }
+
+      function onRemoveTilesets(viewer) {
+        picked = null;
+        tilesets.forEach((tileset) => viewer.scene.primitives.remove(tileset));
+        tilesets = [];
+      }
+
+      async function onChangeLayer(viewer, name) {
+        const request = ++layerRequest;
+        onRemoveTilesets(viewer);
+        document.getElementById("info").textContent = "click อาคารเพื่อดูข้อมูล";
+
+        for (const url of layers[name]) {
+          try {
+            const tileset = await onAddTileset(viewer, url);
+            if (request !== layerRequest) {
+              viewer.scene.primitives.remove(tileset);
+              return;
+            }
+            tileset.style = document.getElementById("byHeight").checked ? heightStyle() : undefined;
+            tilesets.push(tileset);
+          } catch (error) {
+            if (request !== layerRequest) return;
+            showRows([["error", `${url}: ${error}`]]);
+          }
+        }
+
+        if (name === "pattaya") {
+          viewer.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(100.877, 12.905, 2500),
+            orientation: { pitch: Cesium.Math.toRadians(-35) },
+          });
+        } else if (tilesets[0]) {
+          viewer.zoomTo(tilesets[0]);
+        }
+      }
+
+      function showRows(rows) {
+        const table = document.createElement("table");
+        rows.forEach(([key, value]) => {
+          const row = table.insertRow();
+          row.insertCell().textContent = key;
+          row.insertCell().textContent = value ?? "";
+        });
+        document.getElementById("info").replaceChildren(table);
+      }
+
+      async function showFeature(feature) {
+        showRows(feature.getPropertyIds().map((key) => [key, feature.getProperty(key)]));
+
+        const globalId = feature.getProperty("globalId");
+        if (!globalId) return;
+
+        const url = `${featuresService}/items?globalId=${encodeURIComponent(globalId)}&limit=1`;
+        try {
+          const response = await fetch(url, { headers: { "API-Key": gatewayKey } });
+          const building = (await response.json()).features?.[0];
+          if (building && picked === feature) {
+            showRows(Object.entries(building.properties).filter(([key]) => !key.startsWith("_")));
+          }
+        } catch (error) {}
+      }
+
+      function onPickFeature(viewer, position) {
+        const feature = viewer.scene.pick(position);
+        try {
+          if (picked) picked.color = picked.originalColor;
+        } catch (error) {}
+        picked = null;
+
+        if (!(feature instanceof Cesium.Cesium3DTileFeature)) return;
+        picked = feature;
+        feature.originalColor = Cesium.Color.clone(feature.color);
+        feature.color = Cesium.Color.YELLOW;
+        showFeature(feature);
+      }
+
+      new Cesium.ScreenSpaceEventHandler(scene.canvas).setInputAction(
+        (click) => onPickFeature(viewer, click.position),
+        Cesium.ScreenSpaceEventType.LEFT_CLICK,
+      );
+
+      document
+        .getElementById("layer")
+        .addEventListener("change", (e) => onChangeLayer(viewer, e.target.value));
+      document
+        .getElementById("terrain")
+        .addEventListener("change", (e) => onToggleTerrain(viewer, e.target.checked));
+      document.getElementById("byHeight").addEventListener("change", (e) => {
+        tilesets.forEach((tileset) => {
+          tileset.style = e.target.checked ? heightStyle() : undefined;
+        });
+      });
+
+      document.getElementById("keyForm").addEventListener("submit", (e) => {
+        e.preventDefault();
+        const key = document.getElementById("input-secret").value.trim();
+        if (!key) return;
+        gatewayKey = key;
+        onAddBasemap(viewer);
+        onChangeLayer(viewer, document.getElementById("layer").value);
+      });
+
+      onAddBasemap(viewer);
+      onToggleTerrain(viewer, true);
+      onChangeLayer(viewer, "pattaya");
+    </script>
+  </body>
+</html>
