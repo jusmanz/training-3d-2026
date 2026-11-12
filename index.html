@@ -80,7 +80,7 @@
 
       <form id="keyForm">
         <label for="input-secret">Your API Key</label>
-        <input type="text" id="input-secret" name="api_key" value="" />
+        <input type="password" id="input-secret" value="" autocomplete="off" />
         <button type="submit">Submit</button>
       </form>
       <div id="info">click อาคารเพื่อดูข้อมูล</div>
@@ -132,7 +132,13 @@
       let terrainEnabled = false;
       let basemap = null;
 
+      function hasKey() {
+        // a find-and-replace of the placeholder must not also rewrite this check
+        return !gatewayKey.startsWith("<");
+      }
+
       function onAddBasemap(viewer) {
+        if (!hasKey()) return null;
         if (basemap) viewer.imageryLayers.remove(basemap);
         basemap = viewer.imageryLayers.addImageryProvider(
           new Cesium.UrlTemplateImageryProvider({
@@ -196,6 +202,10 @@
       async function onChangeLayer(viewer, name) {
         const request = ++layerRequest;
         onRemoveTilesets(viewer);
+        if (!hasKey()) {
+          document.getElementById("info").textContent = "กรอก API key แล้วกด Submit";
+          return;
+        }
         document.getElementById("info").textContent = "click อาคารเพื่อดูข้อมูล";
 
         for (const url of layers[name]) {
